@@ -1,7 +1,7 @@
 // netlify/functions/generate-words.js
 import crypto from "crypto";
 
-const MODEL = "claude-3-5-sonnet-latest";
+const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
 const MAX_TOKENS_GUARD = 700;
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
