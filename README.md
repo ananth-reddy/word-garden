@@ -1,14 +1,20 @@
-# Word Garden — Practice + Placement + Word list (build 20260218-000818)
+# Word Garden — screenshot-matching UI + daily challenge + weak words + parent mode (build 20260218-004941)
 
-This build adds:
-- Home screen with Placement Test (like your screenshot)
-- Placement test (10 questions)
-- Practice session (8 words/day, mixed new + review) with:
-  - multiple choice
-  - type from definition
-  - fill in blank
-  - Swedish → English
-- Word list screen (search + grouped by level)
+## What’s included
+- Header matches your HTML: **Garden** is light green + italic.
+- Home screen: Start Learning, View Progress, Daily Challenge, Weak words.
+- Learning flow matches screenshots:
+  - Word card (definition, Swedish, example) + US/GB speech buttons
+  - “I’m ready — test me →”
+  - “Choose the correct definition” screen
+- Progress screen matches screenshot sections:
+  - Overall + per-level progress bars
+  - Placement history
+  - Word-by-word list with US/GB buttons + confidence dot
+- Daily challenge (5 questions/day) with “🌸 Bloomed!” reward
+- Weak word mode (practices words you struggle with)
+- Leveling logic improved (70% mastered + 65% accuracy + 10 attempted)
+- Parent mode screen (simple local gate) + server-checked generation
 
 ## Netlify env vars
 - ANTHROPIC_API_KEY
@@ -17,5 +23,5 @@ This build adds:
 - SUPABASE_SERVICE_ROLE_KEY
 - (optional) ANTHROPIC_MODEL = claude-sonnet-4-6
 
-## Deploy
-Push to GitHub and Netlify will build automatically.
+## Notes
+- Parent gate is local-only (hides controls from kids). Generation still checks server-side password.

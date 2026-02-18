@@ -3,7 +3,7 @@ function json(status, obj) {
   return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
 }
 
-const CACHE_TTL_MS = 60 * 1000; // 60 sec
+const CACHE_TTL_MS = 30 * 1000; // 30 sec
 let cache = { ts: 0, data: null };
 
 export default async (req) => {
@@ -17,7 +17,7 @@ export default async (req) => {
 
   try {
     const resp = await fetch(
-      `${url}/rest/v1/words?select=id,word,level,definition,swedish,sentence,source,created_at&order=created_at.desc&limit=2000`,
+      `${url}/rest/v1/words?select=id,word,level,definition,swedish,sentence,source,created_at&order=created_at.desc&limit=5000`,
       { headers: { "apikey": key, "authorization": `Bearer ${key}` } }
     );
     const data = await resp.json();

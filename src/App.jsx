@@ -1,45 +1,52 @@
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
 
-const BUILD_ID = "20260218-000818";
+const BUILD_ID = "20260218-004941";
+const STORAGE_KEY = "wordgarden_progress_v7";
 
-// ---------- storage ----------
-const STORAGE_KEY = "wordgarden_progress_v6";
+const LEVELS = [
+  { n: 1, name: "Beginner", key: "beginner" },
+  { n: 2, name: "Intermediate", key: "intermediate" },
+  { n: 3, name: "Advanced", key: "advanced" },
+];
 
-const freshProgress = () => ({
-  wordStats: {}, // key -> { seen, correct, wrong, mastered, nextReviewAt }
-  currentLevel: 1,
-  streak: 0,
-  lastDate: null,
-  accuracy: { correct: 0, total: 0 },
-  placementDone: false,
-});
-
-const loadProgress = () => {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
+function todayStr() { return new Date().toISOString().slice(0, 10); }
+function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i=a.length-1;i>0;i--){
+    const j = Math.floor(Math.random()*(i+1));
+    [a[i],a[j]]=[a[j],a[i]];
   }
-};
-const saveProgress = (p) => {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(p)); } catch {}
-};
-const todayStr = () => new Date().toISOString().slice(0, 10);
-
-function wordKey(w) {
-  return (w?.id != null) ? String(w.id) : String(w.word);
+  return a;
 }
+function sample(arr, n){ return shuffle(arr).slice(0,n); }
+function wordKey(w){ return (w?.id != null) ? String(w.id) : String(w.word); }
 
-// ---------- API ----------
+function freshProgress(){
+  return {
+    wordStats: {}, // id/word -> {seen, correct, wrong, mastered, nextReviewAt, lastSeenAt}
+    currentLevel: 1,
+    streak: 0,
+    lastDate: null,
+    accuracy: { correct: 0, total: 0 },
+    placementDone: false,
+    placementHistory: [], // [{date, score, level}]
+    daily: {} // date -> {done:boolean, correct, total}
+  };
+}
+function loadProgress(){
+  try{ const raw = localStorage.getItem(STORAGE_KEY); return raw ? JSON.parse(raw) : null; }catch{ return null; }
+}
+function saveProgress(p){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(p)); }catch{} }
+
 async function apiListWords() {
   const res = await fetch("/.netlify/functions/list-words");
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.error || "Failed to load words");
   return Array.isArray(data) ? data : [];
 }
-
 async function apiGenerateWords({ level, existingWords, password }) {
   const res = await fetch("/.netlify/functions/generate-words", {
     method: "POST",
@@ -51,59 +58,78 @@ async function apiGenerateWords({ level, existingWords, password }) {
   return data;
 }
 
-// ---------- helpers ----------
-function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
-
-function shuffle(arr) {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-
-function sample(arr, n) { return shuffle(arr).slice(0, n); }
-
-function computeAccuracy(acc) {
-  const total = acc.total || 0;
+// ---------- learning logic ----------
+function computeAccuracy(acc){
+  const total = acc?.total || 0;
   if (!total) return 0;
   return Math.round((acc.correct / total) * 100);
 }
-
-function getDueReviewWords(words, prog) {
+function masteredCount(prog){
+  return Object.values(prog.wordStats || {}).filter(s => s.mastered).length;
+}
+function levelName(n){
+  return (LEVELS.find(x => x.n === Number(n)) || LEVELS[0]).name;
+}
+function getDueReviewWords(words, prog){
   const now = Date.now();
-  const due = [];
-  for (const w of words) {
-    const k = wordKey(w);
-    const s = prog.wordStats?.[k];
-    if (!s) continue;
-    if (s.mastered) continue;
-    if (s.nextReviewAt && s.nextReviewAt <= now) due.push(w);
-  }
-  return due;
+  return words.filter(w => {
+    const s = prog.wordStats?.[wordKey(w)];
+    return s && !s.mastered && s.nextReviewAt && s.nextReviewAt <= now;
+  });
+}
+function getUnseenWords(words, prog, level){
+  return words.filter(w => Number(w.level) === Number(level) && !prog.wordStats?.[wordKey(w)]);
+}
+function scheduleNextReview(stat){
+  const c = stat.correct || 0;
+  const days = c >= 6 ? 14 : c >= 4 ? 7 : c >= 2 ? 2 : 1;
+  return Date.now() + days*24*60*60*1000;
 }
 
-function getUnseenWords(words, prog, level) {
+// Weak words: attempted >=2 and accuracy < 60% OR wrong >=2
+function getWeakWords(words, prog){
   const out = [];
-  for (const w of words) {
-    if (Number(w.level) !== Number(level)) continue;
-    const k = wordKey(w);
-    if (!prog.wordStats?.[k]) out.push(w);
+  for (const w of words){
+    const s = prog.wordStats?.[wordKey(w)];
+    if (!s) continue;
+    const t = (s.correct||0) + (s.wrong||0);
+    const pct = t ? (s.correct / t) : 0;
+    if (t >= 2 && pct < 0.6) out.push(w);
+    else if ((s.wrong||0) >= 2 && !s.mastered) out.push(w);
   }
   return out;
 }
 
-function scheduleNextReview(stat) {
-  const c = stat.correct || 0;
-  const days = c >= 6 ? 14 : c >= 4 ? 7 : c >= 2 ? 2 : 1;
-  return Date.now() + days * 24 * 60 * 60 * 1000;
+// Level up guard: (1) mastered >= 70% of level words, (2) overall accuracy >= 65%, (3) attempted >= 10 on that level
+function shouldLevelUp(words, prog){
+  const L = prog.currentLevel || 1;
+  if (L >= 3) return false;
+  const levelWords = words.filter(w => Number(w.level) === Number(L));
+  if (!levelWords.length) return false;
+
+  let mastered = 0, attempted = 0;
+  for (const w of levelWords){
+    const s = prog.wordStats?.[wordKey(w)];
+    if (!s) continue;
+    attempted += 1;
+    if (s.mastered) mastered += 1;
+  }
+  const masteredPct = mastered / levelWords.length;
+  const overallAcc = (prog.accuracy?.total || 0) ? (prog.accuracy.correct / prog.accuracy.total) : 0;
+  return masteredPct >= 0.7 && overallAcc >= 0.65 && attempted >= 10;
 }
 
-// ---------- UI components ----------
-function Card({ children }) { return <div className="card">{children}</div>; }
+function speak(text, lang){
+  if (!("speechSynthesis" in window)) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = lang;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(u);
+}
 
-function Badge({ label, value }) {
+// ---------- UI primitives ----------
+function Card({ children }){ return <div className="card">{children}</div>; }
+function Badge({ label, value }){
   return (
     <div className="badge">
       <div className="badgeVal">{value}</div>
@@ -111,50 +137,47 @@ function Badge({ label, value }) {
     </div>
   );
 }
-
-function Toast({ text }) {
-  if (!text) return null;
+function Header(){
   return (
-    <div className="toastWrap">
-      <div className="toast">
-        <div style={{ fontWeight: 900, color: "#5a2d2d" }}>Note</div>
-        <div className="small" style={{ color: "#5a2d2d", marginTop: 6 }}>{text}</div>
+    <div style={{ textAlign:"center", marginBottom: 16 }}>
+      <div style={{ fontSize: 46, marginBottom: 6 }}>🌿</div>
+      <div className="h1">
+        Word <span className="garden">Garden</span>
       </div>
+      <div className="subtitle">Grow your English vocabulary</div>
     </div>
   );
 }
 
-function Home({ prog, sharedCount, onStartPractice, onPlacement, onSkipPlacement, onWords, onProgress }) {
-  const accuracy = computeAccuracy(prog.accuracy);
-  const mastered = Object.values(prog.wordStats || {}).filter(s => s.mastered).length;
+// ---------- Screens ----------
+function HomeScreen({ prog, wordsCount, onStart, onProgress, onDaily, onWeak, onPlacement, onSkipPlacement }){
+  const acc = computeAccuracy(prog.accuracy);
+  const mastered = masteredCount(prog);
+  const lvlName = levelName(prog.currentLevel || 1);
+
+  const pct = wordsCount ? Math.round((mastered/wordsCount)*100) : 0;
 
   return (
     <div className="page">
       <div className="container">
-        <div style={{ textAlign: "center", marginBottom: 18 }}>
-          <div style={{ fontSize: 52, marginBottom: 8 }}>🌿</div>
-          <div className="title">Word Garden</div>
-          <div className="subtitle">Grow your English vocabulary <span className="small">· Build {BUILD_ID}</span></div>
-        </div>
+        <Header />
 
         <Card>
-          <div className="row" style={{ marginBottom: 14 }}>
+          <div className="row">
             <Badge label="Mastered" value={mastered} />
             <Badge label="Streak" value={`${prog.streak}d`} />
-            <Badge label="Accuracy" value={`${accuracy}%`} />
+            <Badge label="Accuracy" value={`${acc}%`} />
           </div>
 
-          <div className="small" style={{ marginTop: 4 }}>
-            Progress — {mastered} of {sharedCount} words mastered
+          <div className="small" style={{ marginTop: 14 }}>
+            Progress — {mastered} of {wordsCount} words mastered
           </div>
-          <div style={{ height: 8, background: "#eef2ef", borderRadius: 999, marginTop: 10, overflow: "hidden" }}>
-            <div style={{ width: `${sharedCount ? Math.round((mastered/sharedCount)*100) : 0}%`, height: "100%", background: "#2d5a3d" }} />
-          </div>
+          <div className="progressLine"><div className="progressFill" style={{ width: `${pct}%` }} /></div>
 
           {!prog.placementDone ? (
             <>
-              <div style={{ background: "#eaf6ea", borderRadius: 16, padding: 14, marginTop: 14 }}>
-                <div style={{ fontWeight: 900, color: "#2d5a3d" }}>Start with a placement test</div>
+              <div className="cardInner" style={{ marginTop: 14 }}>
+                <div style={{ fontWeight: 900, color:"var(--ink)" }}>Start with a placement test</div>
                 <div className="small" style={{ marginTop: 6 }}>
                   A quick 10-question test finds the right starting level for you.
                 </div>
@@ -164,98 +187,296 @@ function Home({ prog, sharedCount, onStartPractice, onPlacement, onSkipPlacement
             </>
           ) : (
             <>
-              <button className="btnPrimary" onClick={onStartPractice}>Start Practice</button>
-              <button className="btnSecondary" onClick={onWords}>Word list</button>
-              <button className="btnGhost" onClick={onProgress}>Progress</button>
-              <div className="small" style={{ marginTop: 12 }}>
-                Shared words available: <b>{sharedCount}</b>
+              <div className="kvRow" style={{ marginTop: 10 }}>
+                <div className="small">Current level</div>
+                <strong>{lvlName}</strong>
+              </div>
+              <button className="btnPrimary" onClick={onStart}>Start Learning</button>
+              <button className="btnSecondary" onClick={onProgress}>View Progress →</button>
+              <button className="btnGhost" onClick={onDaily}>Daily challenge (5)</button>
+              <button className="btnGhost" onClick={onWeak}>Practice weak words</button>
+              <div className="small" style={{ textAlign:"center", marginTop: 12 }}>
+                Build {BUILD_ID}
               </div>
             </>
           )}
         </Card>
-
-        <div className="small" style={{ textAlign: "center", marginTop: 16 }}>
-          Tip: Safari → Share → <b>Add to Home Screen</b>
-        </div>
       </div>
     </div>
   );
 }
 
-function WordsScreen({ words, onBack }) {
-  const [q, setQ] = useState("");
-  const filtered = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    if (!s) return words;
-    return words.filter(w =>
-      String(w.word).toLowerCase().includes(s) ||
-      String(w.definition||"").toLowerCase().includes(s) ||
-      String(w.swedish||"").toLowerCase().includes(s)
-    );
-  }, [words, q]);
-
-  const byLevel = useMemo(() => {
-    const m = { 1: [], 2: [], 3: [] };
-    for (const w of filtered) {
-      const L = Number(w.level)||1;
-      if (!m[L]) m[L] = [];
-      m[L].push(w);
-    }
-    return m;
-  }, [filtered]);
-
-  const Row = ({ w }) => (
-    <div style={{ padding: "12px 0", borderBottom: "1px solid #eef2ef" }}>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:10 }}>
-        <div style={{ fontWeight: 900, color:"#2d5a3d", fontSize: 16 }}>{w.word}</div>
-        <span className="pill">L{w.level}</span>
-      </div>
-      <div className="small" style={{ marginTop: 6 }}><b>Meaning:</b> {w.definition}</div>
-      <div className="small" style={{ marginTop: 4 }}><b>Swedish:</b> {w.swedish}</div>
-      <div className="small" style={{ marginTop: 4 }}><b>Sentence:</b> {w.sentence}</div>
-    </div>
-  );
-
+function WordIntroScreen({ word, total, idx, onHome, onReady, showNew=true }){
   return (
     <div className="page">
       <div className="container">
+        <div className="topNav">
+          <button className="backBtn" onClick={onHome}>← Home</button>
+          <div className="small">{idx}/{total}</div>
+        </div>
+
         <Card>
-          <div className="topbar">
-            <div className="h2">Word list</div>
-            <button className="iconBtn" onClick={onBack}>Back</button>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <div className="label">{showNew ? "✨ New word" : "🔁 Review"}</div>
+            <span className="pill pillLevel">Level {word.level}</span>
           </div>
 
-          <div className="hr" />
+          <div style={{ marginTop: 10 }} className="wordTitle">{word.word}</div>
 
-          <input className="input" value={q} onChange={(e)=>setQ(e.target.value)} placeholder="Search word, meaning, or Swedish…" />
-
-          <div className="small" style={{ marginTop: 10 }}>
-            Showing <b>{filtered.length}</b> words
+          <div style={{ display:"flex", gap:10, marginTop: 10 }}>
+            <button className="miniBtn" onClick={() => speak(word.word, "en-US")}>🔈 US</button>
+            <button className="miniBtn" onClick={() => speak(word.word, "en-GB")}>🔈 GB</button>
           </div>
 
-          <div className="hr" />
+          <div className="section">
+            <div className="sectionTitle">Definition</div>
+            <div style={{ marginTop: 6, fontSize: 16 }}>{word.definition}</div>
+          </div>
 
-          {[1,2,3].map(L => (
-            <div key={L} style={{ marginTop: 6 }}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline" }}>
-                <div style={{ fontWeight: 900, color:"#2d5a3d" }}>Level {L}</div>
-                <div className="small">{byLevel[L]?.length || 0}</div>
-              </div>
-              <div style={{ marginTop: 8 }}>
-                {(byLevel[L] || []).slice(0, 300).map(w => <Row key={wordKey(w)} w={w} />)}
-                {(byLevel[L] || []).length > 300 && (
-                  <div className="small" style={{ paddingTop: 10 }}>Showing first 300. Refine search to see more.</div>
-                )}
-              </div>
-            </div>
-          ))}
+          <div className="section">
+            <div className="sectionTitle">🇸🇪 Swedish</div>
+            <div style={{ marginTop: 6, fontSize: 16, fontStyle:"italic" }}>{word.swedish}</div>
+          </div>
+
+          <div className="section">
+            <div className="sectionTitle">Example</div>
+            <div style={{ marginTop: 6, fontSize: 16 }}>{word.sentence?.replace("___", `"${word.word}"`)}</div>
+          </div>
+
+          <button className="btnPrimary" onClick={onReady}>I'm ready — test me →</button>
         </Card>
       </div>
     </div>
   );
 }
 
-function Placement({ words, onDone, onBack }) {
+function DefinitionMCQScreen({ word, choices, idx, total, onHome, onPick }){
+  return (
+    <div className="page">
+      <div className="container">
+        <div className="topNav">
+          <button className="backBtn" onClick={onHome}>← Home</button>
+          <div className="small">{idx}/{total}</div>
+        </div>
+
+        <Card>
+          <div className="label">Choose the correct definition</div>
+
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginTop: 10 }}>
+            <div className="wordTitle" style={{ fontSize: 40 }}>{word.word}</div>
+            <button className="miniBtn miniBtnMuted" onClick={() => speak(word.word, "en-US")}>🔈 US</button>
+            <button className="miniBtn miniBtnMuted" onClick={() => speak(word.word, "en-GB")}>🔈 GB</button>
+          </div>
+
+          <div style={{ marginTop: 4 }}>
+            {choices.map((c, i) => (
+              <button key={i} className="choice" onClick={() => onPick(c)}>{c}</button>
+            ))}
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function ProgressScreen({ prog, words, onHome, onRetakePlacement, onParentMode }){
+  const mastered = masteredCount(prog);
+  const acc = computeAccuracy(prog.accuracy);
+
+  const perLevel = useMemo(() => {
+    const out = {1:{total:0, mastered:0},2:{total:0, mastered:0},3:{total:0, mastered:0}};
+    for (const w of words){
+      const L = Number(w.level)||1;
+      out[L].total += 1;
+      const s = prog.wordStats?.[wordKey(w)];
+      if (s?.mastered) out[L].mastered += 1;
+    }
+    return out;
+  }, [words, prog]);
+
+  const wordRows = useMemo(() => {
+    // show first 30 most recent seen words
+    const items = [];
+    for (const w of words){
+      const s = prog.wordStats?.[wordKey(w)];
+      if (!s) continue;
+      items.push({ w, s });
+    }
+    items.sort((a,b) => (b.s.lastSeenAt||0) - (a.s.lastSeenAt||0));
+    return items.slice(0, 30);
+  }, [words, prog]);
+
+  const confidenceDot = (s) => {
+    const t = (s.correct||0)+(s.wrong||0);
+    const pct = t ? (s.correct/t) : 0;
+    if (t < 2) return "dotRed";
+    if (pct >= 0.8) return "dotGreen";
+    if (pct >= 0.5) return "dotYellow";
+    return "dotRed";
+  };
+
+  return (
+    <div className="page">
+      <div className="container">
+        <button className="backBtn" onClick={onHome}>← Back</button>
+        <div style={{ marginTop: 8, marginBottom: 12 }} className="h1" >
+          <span style={{ fontSize: 30 }}>Your Progress</span>
+        </div>
+
+        <Card>
+          <div className="row">
+            <Badge label="Mastered" value={mastered} />
+            <Badge label="Streak" value={`${prog.streak}d`} />
+            <Badge label="Accuracy" value={`${acc}%`} />
+          </div>
+
+          <div className="small" style={{ marginTop: 16 }}>
+            Overall ({mastered}/{words.length})
+          </div>
+          <div className="progressLine">
+            <div className="progressFill" style={{ width: `${words.length ? Math.round((mastered/words.length)*100) : 0}%` }} />
+          </div>
+
+          <div className="small" style={{ marginTop: 12 }}>
+            Beginner — {perLevel[1].mastered}/{perLevel[1].total}
+          </div>
+          <div className="progressLine">
+            <div className="progressFill" style={{ width: `${perLevel[1].total ? Math.round((perLevel[1].mastered/perLevel[1].total)*100) : 0}%` }} />
+          </div>
+
+          <div className="small" style={{ marginTop: 12 }}>
+            Intermediate — {perLevel[2].mastered}/{perLevel[2].total}
+          </div>
+          <div className="progressLine">
+            <div className="progressFill" style={{ width: `${perLevel[2].total ? Math.round((perLevel[2].mastered/perLevel[2].total)*100) : 0}%` }} />
+          </div>
+
+          <div className="small" style={{ marginTop: 12 }}>
+            Advanced — {perLevel[3].mastered}/{perLevel[3].total}
+          </div>
+          <div className="progressLine">
+            <div className="progressFill" style={{ width: `${perLevel[3].total ? Math.round((perLevel[3].mastered/perLevel[3].total)*100) : 0}%` }} />
+          </div>
+
+          <div className="hr" />
+
+          <div className="label">Placement test history</div>
+          <div style={{ marginTop: 8 }}>
+            {(prog.placementHistory || []).slice(-5).reverse().map((h, i) => (
+              <div key={i} className="kvRow" style={{ padding:"6px 0" }}>
+                <div className="small">{h.date}</div>
+                <div className="small"><b>{h.score}/10</b> → {levelName(h.level)}</div>
+              </div>
+            ))}
+            {(!prog.placementHistory || !prog.placementHistory.length) && (
+              <div className="small" style={{ marginTop: 6 }}>No placement tests taken yet.</div>
+            )}
+          </div>
+
+          <div className="hr" />
+
+          <div className="label">Word by word</div>
+
+          <table className="table">
+            <tbody>
+              {wordRows.map(({w,s}) => {
+                const t = (s.correct||0)+(s.wrong||0);
+                return (
+                  <tr key={wordKey(w)} className="tr">
+                    <td className="td" style={{ fontWeight: 900 }}>{w.word}</td>
+                    <td className="td" style={{ textAlign:"right" }}>
+                      <button className="miniBtn miniBtnMuted" onClick={()=>speak(w.word,"en-US")} title="US">🔈 US</button>{" "}
+                      <button className="miniBtn miniBtnMuted" onClick={()=>speak(w.word,"en-GB")} title="GB">🔈 GB</button>
+                    </td>
+                    <td className="td" style={{ textAlign:"right", fontWeight: 800 }}>{s.correct||0}/{t||0}</td>
+                    <td className="td" style={{ width: 30 }}>
+                      <span className={`dot ${confidenceDot(s)}`} />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+
+          <button className="btnSecondary" onClick={onRetakePlacement}>Retake Placement Test</button>
+          <button className="btnGhost" onClick={onParentMode}>Parent mode</button>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function ParentModeScreen({ prog, words, onBack, onGenerate, generateStatus, onResetChild }){
+  const mastered = masteredCount(prog);
+  const weak = getWeakWords(words, prog).length;
+  const total = words.length;
+
+  return (
+    <div className="page">
+      <div className="container">
+        <div className="topNav">
+          <button className="backBtn" onClick={onBack}>← Home</button>
+          <div className="pill">Parent mode</div>
+        </div>
+
+        <Card>
+          <div style={{ fontFamily:"DM Serif Display, serif", fontSize: 28 }}>Parent dashboard</div>
+          <div className="small" style={{ marginTop: 6 }}>Quick overview and controls.</div>
+
+          <div className="row" style={{ marginTop: 14 }}>
+            <Badge label="Total words" value={total} />
+            <Badge label="Mastered" value={mastered} />
+            <Badge label="Weak" value={weak} />
+          </div>
+
+          <div className="hr" />
+
+          <div className="label">Controls</div>
+          <button className="btnPrimary" onClick={onGenerate}>Generate 12 words for current level</button>
+          {generateStatus && <div className="small" style={{ marginTop: 10 }}><b>Status:</b> {generateStatus}</div>}
+
+          <button className="btnSecondary" onClick={onResetChild}>Reset child progress (this device)</button>
+          <div className="small" style={{ marginTop: 10 }}>
+            Note: generation requires the admin password (checked server-side).
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function ParentGate({ onUnlock, onBack }){
+  const [pw, setPw] = useState(() => sessionStorage.getItem("wg_parent_pw") || "");
+  const [msg, setMsg] = useState("");
+  const secret = "__LOCAL_PARENT_HINT__"; // not used for real auth; gate is local
+  return (
+    <div className="page">
+      <div className="container">
+        <div className="topNav">
+          <button className="backBtn" onClick={onBack}>← Back</button>
+        </div>
+        <Card>
+          <div style={{ fontFamily:"DM Serif Display, serif", fontSize: 28 }}>Parent mode</div>
+          <div className="small" style={{ marginTop: 6 }}>Enter your parent password to continue.</div>
+
+          <div className="hr" />
+
+          <input className="input" type="password" value={pw} onChange={(e)=>setPw(e.target.value)} placeholder="Parent password" />
+          <button className="btnPrimary" onClick={() => { sessionStorage.setItem("wg_parent_pw", pw); onUnlock(pw); }}>
+            Unlock
+          </button>
+          {msg && <div className="small" style={{ marginTop: 10 }}>{msg}</div>}
+          <div className="small" style={{ marginTop: 10 }}>
+            Tip: this password is only to hide parent controls from kids. Admin generation still checks server-side.
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// Placement: 10 definition->word questions, sets starting level; stores history
+function PlacementScreen({ words, onDone, onBack }){
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState([]);
   const [quiz, setQuiz] = useState([]);
@@ -283,7 +504,7 @@ function Placement({ words, onDone, onBack }) {
 
   const scoreByLevel = useMemo(() => {
     const s = {1:{c:0,t:0},2:{c:0,t:0},3:{c:0,t:0}};
-    for (const a of answers) {
+    for (const a of answers){
       s[a.level].t += 1;
       if (a.correct) s[a.level].c += 1;
     }
@@ -292,29 +513,29 @@ function Placement({ words, onDone, onBack }) {
 
   const finish = () => {
     let level = 1;
-    for (const L of [1,2,3]) {
+    for (const L of [1,2,3]){
       const t = scoreByLevel[L].t || 0;
       const c = scoreByLevel[L].c || 0;
-      if (t > 0 && (c / t) >= 0.7) level = L;
+      if (t > 0 && (c/t) >= 0.7) level = L;
     }
-    onDone(level);
+    const correct = answers.filter(a => a.correct).length;
+    onDone({ level, score: correct });
   };
 
-  if (!quiz.length) {
+  if (!quiz.length){
     return (
       <div className="page"><div className="container"><Card>
-        <div className="topbar"><div className="h2">Placement test</div><button className="iconBtn" onClick={onBack}>Back</button></div>
-        <div className="hr" />
-        <div className="small">Not enough words loaded yet to run the test.</div>
+        <div className="topNav"><button className="backBtn" onClick={onBack}>← Back</button><div className="small">Placement</div></div>
+        <div className="small">Not enough words loaded yet to run the placement test.</div>
       </Card></div></div>
     );
   }
 
-  if (!current) {
+  if (step >= quiz.length){
     return (
       <div className="page"><div className="container"><Card>
-        <div className="topbar"><div className="h2">Placement result</div><button className="iconBtn" onClick={onBack}>Back</button></div>
-        <div className="hr" />
+        <div className="topNav"><button className="backBtn" onClick={onBack}>← Back</button><div className="small">Placement</div></div>
+        <div className="label">Done</div>
         <button className="btnPrimary" onClick={finish}>See result</button>
       </Card></div></div>
     );
@@ -327,328 +548,360 @@ function Placement({ words, onDone, onBack }) {
   };
 
   return (
-    <div className="page">
-      <div className="container">
-        <Card>
-          <div className="topbar">
-            <div className="h2">Placement test</div>
-            <button className="iconBtn" onClick={onBack}>Back</button>
-          </div>
-
-          <div className="small" style={{ marginTop: 8 }}>
-            Question {step + 1} / {quiz.length}
-          </div>
-
-          <div className="hr" />
-
-          <div className="small" style={{ color:"#2d5a3d", fontWeight: 900 }}>What word matches this meaning?</div>
-          <div style={{ marginTop: 10, fontSize: 18, fontWeight: 800, color:"#2d5a3d" }}>
-            “{current.prompt}”
-          </div>
-
-          <div style={{ marginTop: 6 }}>
-            {current.choices.map(c => (
-              <button key={c} className="choice" onClick={() => choose(c)}>{c}</button>
-            ))}
-          </div>
-        </Card>
-      </div>
-    </div>
+    <div className="page"><div className="container">
+      <Card>
+        <div className="topNav">
+          <button className="backBtn" onClick={onBack}>← Back</button>
+          <div className="small">Question {step+1}/10</div>
+        </div>
+        <div className="label">What word matches this meaning?</div>
+        <div style={{ marginTop: 10, fontSize: 18, fontWeight: 900 }}>
+          “{current.prompt}”
+        </div>
+        {current.choices.map((c) => (
+          <button key={c} className="choice" onClick={() => choose(c)}>{c}</button>
+        ))}
+      </Card>
+    </div></div>
   );
 }
 
-function Practice({ words, prog, setProg, onBack }) {
-  const [session, setSession] = useState(null);
-  const [idx, setIdx] = useState(0);
-  const [mode, setMode] = useState("intro");
-  const [answerText, setAnswerText] = useState("");
+function DailyChallengeScreen({ words, prog, setProg, onHome }){
+  const date = todayStr();
+  const record = prog.daily?.[date] || { done:false, correct:0, total:0 };
+
+  const [step, setStep] = useState(0);
+  const [done, setDone] = useState(record.done);
+  const [session, setSession] = useState([]);
+
+  useEffect(() => {
+    // 5 items: 2 due review + 3 unseen from current level
+    const due = getDueReviewWords(words, prog);
+    const unseen = getUnseenWords(words, prog, prog.currentLevel || 1);
+    const pick = shuffle([...sample(due, Math.min(2,due.length)), ...sample(unseen, Math.min(3, unseen.length))]).slice(0,5);
+    setSession(pick);
+    setStep(0);
+  }, [words.length]);
+
+  const current = session[step];
+  const [choices, setChoices] = useState([]);
+
+  useEffect(() => {
+    if (!current) return;
+    const pool = words.filter(x => x.definition && x.word !== current.word);
+    const wrongs = sample(pool, 3).map(x => x.definition);
+    setChoices(shuffle([current.definition, ...wrongs]));
+  }, [current?.word]);
+
+  const mark = (correct) => {
+    setProg(p => {
+      // update global acc
+      const next = { ...p };
+      next.accuracy = { correct: (p.accuracy?.correct||0) + (correct?1:0), total: (p.accuracy?.total||0)+1 };
+
+      // update word stat
+      const k = wordKey(current);
+      const prev = p.wordStats?.[k] || { seen:0, correct:0, wrong:0, mastered:false, nextReviewAt:0, lastSeenAt:0 };
+      const ns = {
+        ...prev,
+        seen: (prev.seen||0)+1,
+        correct: (prev.correct||0) + (correct?1:0),
+        wrong: (prev.wrong||0) + (correct?0:1),
+        lastSeenAt: Date.now(),
+      };
+      const t = ns.correct + ns.wrong;
+      const pct = t ? (ns.correct/t) : 0;
+      if (ns.correct >= 4 && pct >= 0.8) ns.mastered = true;
+      ns.nextReviewAt = scheduleNextReview(ns);
+
+      next.wordStats = { ...(p.wordStats||{}), [k]: ns };
+
+      // daily record
+      const dr = { ...(p.daily||{}) };
+      const cur = dr[date] || { done:false, correct:0, total:0 };
+      const upd = { ...cur, correct: cur.correct + (correct?1:0), total: cur.total+1, done: false };
+      dr[date] = upd;
+      next.daily = dr;
+
+      return next;
+    });
+
+    if (step+1 >= 5){
+      setDone(true);
+      setProg(p => {
+        const dr = { ...(p.daily||{}) };
+        const cur = dr[date] || { done:false, correct:0, total:0 };
+        dr[date] = { ...cur, done:true };
+        return { ...p, daily: dr };
+      });
+    } else {
+      setStep(s => s+1);
+    }
+  };
+
+  if (done){
+    return (
+      <div className="page"><div className="container">
+        <Card>
+          <div className="topNav"><button className="backBtn" onClick={onHome}>← Home</button><div className="small">Daily challenge</div></div>
+          <div style={{ fontFamily:"DM Serif Display, serif", fontSize: 28 }}>🌸 Bloomed!</div>
+          <div className="small" style={{ marginTop: 8 }}>
+            Completed today’s challenge: {record.correct || prog.daily?.[date]?.correct || 0}/{record.total || prog.daily?.[date]?.total || 5}
+          </div>
+          <button className="btnPrimary" onClick={onHome}>Done</button>
+        </Card>
+      </div></div>
+    );
+  }
+
+  if (!current){
+    return (
+      <div className="page"><div className="container">
+        <Card>
+          <div className="topNav"><button className="backBtn" onClick={onHome}>← Home</button><div className="small">Daily challenge</div></div>
+          <div className="small">Not enough words yet.</div>
+        </Card>
+      </div></div>
+    );
+  }
+
+  return (
+    <div className="page"><div className="container">
+      <Card>
+        <div className="topNav"><button className="backBtn" onClick={onHome}>← Home</button><div className="small">{step+1}/5</div></div>
+        <div className="label">Daily challenge</div>
+        <div className="wordTitle" style={{ fontSize: 38, marginTop: 8 }}>{current.word}</div>
+        <div className="small" style={{ marginTop: 8 }}>Choose the correct definition:</div>
+        {choices.map((c,i)=>(
+          <button key={i} className="choice" onClick={() => mark(c === current.definition)}>{c}</button>
+        ))}
+      </Card>
+    </div></div>
+  );
+}
+
+function WeakWordsScreen({ words, prog, setProg, onHome }){
+  const pool = useMemo(() => {
+    const weak = getWeakWords(words, prog);
+    return shuffle(weak).slice(0, 8);
+  }, [words, prog]);
+
+  const [step, setStep] = useState(0);
+  const current = pool[step];
+
+  const [choices, setChoices] = useState([]);
+
+  useEffect(() => {
+    if (!current) return;
+    const poolDefs = words.filter(x => x.definition && x.word !== current.word);
+    const wrongs = sample(poolDefs, 3).map(x => x.definition);
+    setChoices(shuffle([current.definition, ...wrongs]));
+  }, [current?.word]);
+
+  const mark = (correct) => {
+    setProg(p => {
+      const next = { ...p };
+      next.accuracy = { correct: (p.accuracy?.correct||0) + (correct?1:0), total: (p.accuracy?.total||0)+1 };
+      const k = wordKey(current);
+      const prev = p.wordStats?.[k] || { seen:0, correct:0, wrong:0, mastered:false, nextReviewAt:0, lastSeenAt:0 };
+      const ns = {
+        ...prev,
+        seen: (prev.seen||0)+1,
+        correct: (prev.correct||0) + (correct?1:0),
+        wrong: (prev.wrong||0) + (correct?0:1),
+        lastSeenAt: Date.now(),
+      };
+      const t = ns.correct + ns.wrong;
+      const pct = t ? (ns.correct/t) : 0;
+      if (ns.correct >= 4 && pct >= 0.8) ns.mastered = true;
+      ns.nextReviewAt = scheduleNextReview(ns);
+      next.wordStats = { ...(p.wordStats||{}), [k]: ns };
+      return next;
+    });
+
+    if (step+1 >= pool.length) setStep(step+1);
+    else setStep(s => s+1);
+  };
+
+  if (!pool.length){
+    return (
+      <div className="page"><div className="container">
+        <Card>
+          <div className="topNav"><button className="backBtn" onClick={onHome}>← Home</button><div className="small">Weak words</div></div>
+          <div style={{ fontFamily:"DM Serif Display, serif", fontSize: 26 }}>All good</div>
+          <div className="small" style={{ marginTop: 8 }}>No weak words yet. Keep practicing!</div>
+        </Card>
+      </div></div>
+    );
+  }
+
+  if (!current){
+    return (
+      <div className="page"><div className="container">
+        <Card>
+          <div className="topNav"><button className="backBtn" onClick={onHome}>← Home</button><div className="small">Weak words</div></div>
+          <div style={{ fontFamily:"DM Serif Display, serif", fontSize: 26 }}>Done</div>
+          <div className="small" style={{ marginTop: 8 }}>Weak-word practice finished.</div>
+          <button className="btnPrimary" onClick={onHome}>Done</button>
+        </Card>
+      </div></div>
+    );
+  }
+
+  return (
+    <div className="page"><div className="container">
+      <Card>
+        <div className="topNav"><button className="backBtn" onClick={onHome}>← Home</button><div className="small">{step+1}/{pool.length}</div></div>
+        <div className="label">Practice your weak words</div>
+        <div className="wordTitle" style={{ fontSize: 38, marginTop: 8 }}>{current.word}</div>
+        <div className="small" style={{ marginTop: 8 }}>Choose the correct definition:</div>
+        {choices.map((c,i)=>(
+          <button key={i} className="choice" onClick={() => mark(c === current.definition)}>{c}</button>
+        ))}
+      </Card>
+    </div></div>
+  );
+}
+
+// Main learning flow: show word intro -> quiz (MCQ definition, or rotate types)
+function LearningFlow({ words, prog, setProg, onHome }){
+  const [index, setIndex] = useState(0);
+  const [phase, setPhase] = useState("intro"); // intro|quiz
+  const [session, setSession] = useState([]);
+  const [choices, setChoices] = useState([]);
   const [feedback, setFeedback] = useState("");
 
-  const pool = useMemo(() => {
+  useEffect(() => {
     const level = prog.currentLevel || 1;
     const due = getDueReviewWords(words, prog);
     const unseen = getUnseenWords(words, prog, level);
-    const duePick = sample(due, Math.min(3, due.length));
-    const unseenPick = sample(unseen, Math.min(5, unseen.length));
-    return shuffle([...duePick, ...unseenPick]).slice(0, 8);
-  }, [words, prog]);
+    const pick = shuffle([...sample(unseen, Math.min(4, unseen.length)), ...sample(due, Math.min(2, due.length))]).slice(0,6);
+    setSession(pick);
+    setIndex(0);
+    setPhase("intro");
+    setFeedback("");
+  }, [words.length, prog.currentLevel]);
+
+  const current = session[index];
 
   useEffect(() => {
-    setSession(pool);
-    setIdx(0);
-    setMode("intro");
-    setAnswerText("");
-    setFeedback("");
-  }, [pool.length]);
+    if (!current) return;
+    // Build MCQ definitions choices (matches screenshot)
+    const pool = words.filter(x => x.definition && x.word !== current.word);
+    const wrongs = sample(pool, 3).map(x => x.definition);
+    setChoices(shuffle([current.definition, ...wrongs]));
+  }, [current?.word, words.length]);
 
-  const current = session?.[idx];
-
-  const bumpAccuracy = (correct) => {
-    setProg(p => ({
-      ...p,
-      accuracy: {
-        correct: (p.accuracy?.correct || 0) + (correct ? 1 : 0),
-        total: (p.accuracy?.total || 0) + 1,
-      }
-    }));
-  };
-
-  const updateWordStat = (w, correct) => {
+  const applyAnswer = (correct) => {
     setProg(p => {
-      const k = wordKey(w);
-      const prev = p.wordStats?.[k] || { seen:0, correct:0, wrong:0, mastered:false, nextReviewAt:0 };
-      const nextStat = {
+      const next = { ...p };
+      next.accuracy = { correct: (p.accuracy?.correct||0) + (correct?1:0), total: (p.accuracy?.total||0)+1 };
+
+      const k = wordKey(current);
+      const prev = p.wordStats?.[k] || { seen:0, correct:0, wrong:0, mastered:false, nextReviewAt:0, lastSeenAt:0 };
+      const ns = {
         ...prev,
-        seen: prev.seen + 1,
-        correct: prev.correct + (correct ? 1 : 0),
-        wrong: prev.wrong + (correct ? 0 : 1),
+        seen: (prev.seen||0)+1,
+        correct: (prev.correct||0) + (correct?1:0),
+        wrong: (prev.wrong||0) + (correct?0:1),
+        lastSeenAt: Date.now(),
       };
-      const total = nextStat.correct + nextStat.wrong;
-      const pct = total ? (nextStat.correct/total) : 0;
-      if (nextStat.correct >= 4 && pct >= 0.8) nextStat.mastered = true;
-      nextStat.nextReviewAt = scheduleNextReview(nextStat);
+      const t = ns.correct + ns.wrong;
+      const pct = t ? (ns.correct/t) : 0;
+      if (ns.correct >= 4 && pct >= 0.8) ns.mastered = true;
+      ns.nextReviewAt = scheduleNextReview(ns);
 
-      return { ...p, wordStats: { ...(p.wordStats || {}), [k]: nextStat } };
+      next.wordStats = { ...(p.wordStats||{}), [k]: ns };
+
+      // Level-up guard
+      if (shouldLevelUp(words, next)) next.currentLevel = clamp((next.currentLevel||1)+1, 1, 3);
+
+      return next;
     });
+
+    setFeedback(correct ? "✅ Correct" : "❌ Not quite");
+    setTimeout(() => {
+      setFeedback("");
+      if (index+1 >= session.length) {
+        onHome();
+      } else {
+        setIndex(i => i+1);
+        setPhase("intro");
+      }
+    }, 650);
   };
 
-  const question = useMemo(() => {
-    if (!current) return null;
-    const types = ["mcq", "type_def", "fill_blank", "sv_to_en"];
-    const t = types[(idx + (prog.streak||0)) % types.length];
-
-    if (t === "mcq") {
-      const poolWords = words.filter(x => x.word && x.word !== current.word);
-      const wrongs = sample(poolWords, 3).map(x => x.word);
-      const choices = shuffle([current.word, ...wrongs]);
-      return { type: "mcq", prompt: current.definition, choices, answer: current.word, help: "Choose the correct word." };
-    }
-    if (t === "type_def") return { type: "type_def", prompt: current.definition, answer: current.word, help: "Type the word that matches the meaning." };
-    if (t === "fill_blank") return { type: "fill_blank", prompt: current.sentence, answer: current.word, help: "Type the missing word." };
-    return { type: "sv_to_en", prompt: current.swedish, answer: current.word, help: "Translate Swedish → English." };
-  }, [current, idx, words, prog.streak]);
-
-  const nextWord = () => {
-    setFeedback("");
-    setAnswerText("");
-    if (!session) return;
-    if (idx + 1 >= session.length) setMode("done");
-    else { setIdx(i => i + 1); setMode("intro"); }
-  };
-
-  const submit = (val) => {
-    const guess = String(val || answerText || "").trim().toLowerCase();
-    const truth = String(question.answer).trim().toLowerCase();
-    const correct = guess === truth;
-
-    bumpAccuracy(correct);
-    updateWordStat(current, correct);
-    setFeedback(correct ? "✅ Correct!" : `❌ Not quite. Correct: ${question.answer}`);
-    setTimeout(() => nextWord(), 900);
-  };
-
-  if (!session || !session.length) {
+  if (!current){
     return (
-      <div className="page"><div className="container"><Card>
-        <div className="topbar"><div className="h2">Practice</div><button className="iconBtn" onClick={onBack}>Back</button></div>
-        <div className="hr" />
-        <div className="small">No words available for this level yet.</div>
-      </Card></div></div>
+      <div className="page"><div className="container">
+        <Card>
+          <div className="topNav"><button className="backBtn" onClick={onHome}>← Home</button><div className="small">Learning</div></div>
+          <div className="small">No words available yet for this level.</div>
+        </Card>
+      </div></div>
     );
   }
 
-  if (mode === "done") {
+  if (phase === "intro"){
+    const showNew = !prog.wordStats?.[wordKey(current)];
     return (
-      <div className="page"><div className="container"><Card>
-        <div className="topbar"><div className="h2">Nice work</div><button className="iconBtn" onClick={onBack}>Back</button></div>
-        <div className="hr" />
-        <div className="small">Practice session complete.</div>
-        <button className="btnPrimary" onClick={onBack}>Done</button>
-      </Card></div></div>
+      <WordIntroScreen
+        word={current}
+        idx={index}
+        total={session.length}
+        onHome={onHome}
+        showNew={showNew}
+        onReady={() => setPhase("quiz")}
+      />
     );
   }
-
-  if (!current) return null;
 
   return (
-    <div className="page">
-      <div className="container">
-        <Card>
-          <div className="topbar">
-            <div className="h2">Practice</div>
-            <button className="iconBtn" onClick={onBack}>Back</button>
+    <div>
+      <DefinitionMCQScreen
+        word={current}
+        idx={index}
+        total={session.length}
+        onHome={onHome}
+        choices={choices}
+        onPick={(picked) => applyAnswer(picked === current.definition)}
+      />
+      {feedback && (
+        <div style={{ position:"fixed", left:12, right:12, bottom:12 }}>
+          <div className="card" style={{ padding: 14, textAlign:"center" }}>
+            <div style={{ fontWeight: 900 }}>{feedback}</div>
           </div>
-
-          <div className="small" style={{ marginTop: 8 }}>
-            Word {idx + 1} / {session.length} <span className="pill" style={{ marginLeft: 8 }}>L{current.level}</span>
-          </div>
-
-          <div className="hr" />
-
-          {mode === "intro" ? (
-            <>
-              <div style={{ fontWeight: 900, color:"#2d5a3d", fontSize: 22 }}>{current.word}</div>
-              <div className="small" style={{ marginTop: 6 }}><b>Meaning:</b> {current.definition}</div>
-              <div className="small" style={{ marginTop: 6 }}><b>Swedish:</b> {current.swedish}</div>
-              <div className="small" style={{ marginTop: 6 }}><b>Sentence:</b> {current.sentence}</div>
-              <button className="btnPrimary" onClick={() => { setMode("question"); setFeedback(""); setAnswerText(""); }}>
-                Start question →
-              </button>
-            </>
-          ) : (
-            <>
-              <div className="small" style={{ color:"#2d5a3d", fontWeight: 900 }}>{question.help}</div>
-              <div style={{ marginTop: 10, fontSize: 18, fontWeight: 800, color:"#2d5a3d" }}>
-                {question.type === "fill_blank" ? question.prompt : `“${question.prompt}”`}
-              </div>
-
-              {question.type === "mcq" ? (
-                <div style={{ marginTop: 6 }}>
-                  {question.choices.map(c => (
-                    <button key={c} className="choice" onClick={() => submit(c)}>{c}</button>
-                  ))}
-                </div>
-              ) : (
-                <div style={{ marginTop: 12 }}>
-                  <input
-                    className="input"
-                    value={answerText}
-                    onChange={(e)=>setAnswerText(e.target.value)}
-                    placeholder="Type your answer…"
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                    onKeyDown={(e)=>{ if (e.key === "Enter") submit(); }}
-                  />
-                  <button className="btnPrimary" onClick={() => submit()}>Check</button>
-                  <button className="btnSecondary" onClick={() => submit(question.answer)}>Show answer</button>
-                </div>
-              )}
-
-              {feedback && <div className="small" style={{ marginTop: 10, fontWeight: 900, color:"#2d5a3d" }}>{feedback}</div>}
-            </>
-          )}
-        </Card>
-      </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function Progress({ prog, shared, onBack, onRefreshShared }) {
-  const [adminRevealed, setAdminRevealed] = useState(false);
-  const [password, setPassword] = useState(() => sessionStorage.getItem("wg_admin_pw") || "");
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState("");
-  const tapTimer = useRef(null);
-
-  const mastered = Object.values(prog.wordStats || {}).filter(s => s.mastered).length;
-
-  const onLockTap = () => {
-    setMsg("");
-    if (tapTimer.current) clearTimeout(tapTimer.current);
-    tapTimer.current = setTimeout(() => {}, 0);
-    // simple: 3 taps within 2 seconds
-    window.__wg_taps = (window.__wg_taps || 0) + 1;
-    if (window.__wg_taps === 1) {
-      setTimeout(() => { window.__wg_taps = 0; }, 2000);
-    }
-    if (window.__wg_taps >= 3) {
-      window.__wg_taps = 0;
-      setAdminRevealed(true);
-    }
-  };
-
-  const savePw = () => {
-    sessionStorage.setItem("wg_admin_pw", password);
-    setMsg("Password saved for this tab.");
-  };
-
-  const doGenerate = async () => {
-    if (!password.trim()) return alert("Enter admin password first.");
-    setBusy(true);
-    setMsg("");
-    try {
-      const existing = shared.map((w) => w.word);
-      const out = await apiGenerateWords({ level: prog.currentLevel, existingWords: existing, password });
-      setMsg(`Generated and saved ${out.length} words.`);
-      onRefreshShared?.();
-    } catch (e) {
-      setMsg(String(e?.message || e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="page">
-      <div className="container">
-        <Card>
-          <div className="topbar">
-            <div className="h2">Progress</div>
-            <div style={{ display:"flex", gap:10, alignItems:"center" }}>
-              <button className="iconBtn" onClick={onLockTap} title="Admin">🔒</button>
-              <button className="iconBtn" onClick={onBack}>Back</button>
-            </div>
-          </div>
-
-          <div className="row" style={{ marginTop: 12 }}>
-            <Badge label="Mastered" value={mastered} />
-            <Badge label="Seen" value={Object.keys(prog.wordStats||{}).length} />
-            <Badge label="Level" value={`L${prog.currentLevel}`} />
-          </div>
-
-          <div className="small" style={{ marginTop: 12 }}>Shared words available: <b>{shared.length}</b></div>
-          <div className="small" style={{ marginTop: 6 }}>Build: <b>{BUILD_ID}</b></div>
-
-          {adminRevealed && (
-            <>
-              <div className="hr" />
-              <div style={{ fontWeight: 900, color:"#aabfae", letterSpacing:"0.12em" }}>ADMIN</div>
-              <div className="small" style={{ marginTop: 8 }}>Tap 🔒 3 times to reveal. Password is checked server-side.</div>
-
-              <input
-                type="password"
-                className="input"
-                value={password}
-                onChange={(e)=>setPassword(e.target.value)}
-                placeholder="Admin password"
-                style={{ marginTop: 12 }}
-              />
-              <button className="btnSecondary" onClick={savePw} disabled={!password.trim()}>Save password</button>
-              <button className="btnPrimary" onClick={doGenerate} disabled={busy || !password.trim()}>
-                {busy ? "Working…" : "Generate words now"}
-              </button>
-
-              {msg && <div className="small" style={{ marginTop: 10 }}><b>Status:</b> {msg}</div>}
-            </>
-          )}
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-export default function App() {
+// ---------- App ----------
+export default function App(){
   const [prog, setProg] = useState(() => loadProgress() || freshProgress());
-  const [shared, setShared] = useState([]);
-  const [view, setView] = useState("loading"); // loading|home|placement|practice|words|progress
+  const [words, setWords] = useState([]);
+  const [view, setView] = useState("loading"); // home|learn|progress|placement|daily|weak|parentGate|parent
   const [toast, setToast] = useState("");
+  const [adminPw, setAdminPw] = useState(() => sessionStorage.getItem("wg_admin_pw") || "");
+  const [generateStatus, setGenerateStatus] = useState("");
 
-  const refreshShared = async () => {
-    try {
-      const words = await apiListWords();
-      setShared(words);
-    } catch (e) {
-      setToast(String(e?.message || e));
-      setTimeout(() => setToast(""), 4000);
+  const refreshWords = async () => {
+    try{
+      const list = await apiListWords();
+      setWords(list);
+    }catch(e){
+      setToast(String(e?.message||e));
+      setTimeout(() => setToast(""), 3500);
     }
   };
 
-  // streak update
+  // streak update on app load
   useEffect(() => {
     const t = todayStr();
-    if (prog.lastDate !== t) {
-      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-      const newStreak = prog.lastDate === yesterday ? prog.streak + 1 : 1;
+    if (prog.lastDate !== t){
+      const yesterday = new Date(Date.now()-86400000).toISOString().slice(0,10);
+      const newStreak = (prog.lastDate === yesterday) ? (prog.streak + 1) : 1;
       const next = { ...prog, lastDate: t, streak: newStreak };
       setProg(next);
       saveProgress(next);
@@ -656,58 +909,104 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // load shared
+  useEffect(() => { saveProgress(prog); }, [prog]);
+
   useEffect(() => {
     (async () => {
-      try {
-        const words = await apiListWords();
-        setShared(words);
-      } catch (e) {
-        setToast(String(e?.message || e));
-        setShared([]);
-      } finally {
-        setView("home");
-      }
+      await refreshWords();
+      setView("home");
     })();
   }, []);
 
-  useEffect(() => { saveProgress(prog); }, [prog]);
-
-  const onPlacementDone = (level) => {
-    setProg(p => ({ ...p, currentLevel: clamp(level,1,3), placementDone: true }));
+  const onPlacementDone = ({ level, score }) => {
+    setProg(p => {
+      const next = { ...p, placementDone: true, currentLevel: clamp(level,1,3) };
+      next.placementHistory = [...(p.placementHistory||[]), { date: todayStr(), score, level }];
+      return next;
+    });
     setView("home");
   };
 
   const skipPlacement = () => {
-    setProg(p => ({ ...p, currentLevel: 1, placementDone: true }));
+    setProg(p => ({ ...p, placementDone: true, currentLevel: 1 }));
     setView("home");
   };
 
-  if (view === "loading") {
-    return (
-      <div className="page"><div className="container"><Card>
-        <div className="small">Loading…</div>
-      </Card></div></div>
-    );
+  const doGenerate = async () => {
+    if (!adminPw.trim()){
+      const pw = prompt("Enter admin password (used for generation):");
+      if (!pw) return;
+      sessionStorage.setItem("wg_admin_pw", pw);
+      setAdminPw(pw);
+    }
+    setGenerateStatus("Working…");
+    try{
+      const existing = words.map(w => String(w.word||""));
+      const out = await apiGenerateWords({ level: prog.currentLevel || 1, existingWords: existing, password: (adminPw.trim() ? adminPw : (sessionStorage.getItem("wg_admin_pw")||"")) });
+      setGenerateStatus(`Generated/saved ${Array.isArray(out)?out.length:0} words.`);
+      await refreshWords();
+    }catch(e){
+      setGenerateStatus(String(e?.message||e));
+    }
+  };
+
+  const resetChild = () => {
+    if (!confirm("Reset all progress on this device?")) return;
+    const next = freshProgress();
+    setProg(next);
+    saveProgress(next);
+    setView("home");
+  };
+
+  if (view === "loading"){
+    return <div className="page"><div className="container"><Card><div className="small">Loading…</div></Card></div></div>;
   }
 
-  if (view === "placement") return <Placement words={shared} onDone={onPlacementDone} onBack={() => setView("home")} />;
-  if (view === "practice") return <Practice words={shared} prog={prog} setProg={setProg} onBack={() => setView("home")} />;
-  if (view === "words") return <WordsScreen words={shared} onBack={() => setView("home")} />;
-  if (view === "progress") return <Progress prog={prog} shared={shared} onBack={() => setView("home")} onRefreshShared={refreshShared} />;
+  if (view === "placement") return <PlacementScreen words={words} onDone={onPlacementDone} onBack={() => setView("home")} />;
+  if (view === "learn") return <LearningFlow words={words} prog={prog} setProg={setProg} onHome={() => setView("home")} />;
+  if (view === "daily") return <DailyChallengeScreen words={words} prog={prog} setProg={setProg} onHome={() => setView("home")} />;
+  if (view === "weak") return <WeakWordsScreen words={words} prog={prog} setProg={setProg} onHome={() => setView("home")} />;
+  if (view === "progress") return (
+    <ProgressScreen
+      prog={prog}
+      words={words}
+      onHome={() => setView("home")}
+      onRetakePlacement={() => setView("placement")}
+      onParentMode={() => setView("parentGate")}
+    />
+  );
+  if (view === "parentGate") return <ParentGate onBack={() => setView("progress")} onUnlock={() => setView("parent")} />;
+  if (view === "parent") return (
+    <ParentModeScreen
+      prog={prog}
+      words={words}
+      onBack={() => setView("home")}
+      onGenerate={doGenerate}
+      generateStatus={generateStatus}
+      onResetChild={resetChild}
+    />
+  );
 
   return (
     <>
-      <Home
+      <HomeScreen
         prog={prog}
-        sharedCount={shared.length}
-        onStartPractice={() => setView("practice")}
+        wordsCount={words.length}
+        onStart={() => setView("learn")}
+        onProgress={() => setView("progress")}
+        onDaily={() => setView("daily")}
+        onWeak={() => setView("weak")}
         onPlacement={() => setView("placement")}
         onSkipPlacement={skipPlacement}
-        onWords={() => setView("words")}
-        onProgress={() => setView("progress")}
       />
-      <Toast text={toast} />
+      {toast && (
+        <div style={{ position:"fixed", left:12, right:12, bottom:12 }}>
+          <div className="card" style={{ padding: 14 }}>
+            <div style={{ fontWeight: 900 }}>Note</div>
+            <div className="small" style={{ marginTop: 6 }}>{toast}</div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

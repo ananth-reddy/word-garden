@@ -1,5 +1,4 @@
--- Run this in Supabase SQL editor
-
+-- Run this once in Supabase SQL editor
 create table if not exists public.words (
   id bigserial primary key,
   word text not null unique,

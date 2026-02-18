@@ -84,7 +84,7 @@ async function supabaseUpsert(words) {
   });
 
   const data = await resp.json();
-  if (!resp.ok) throw new Error("Supabase upsert error: " + JSON.stringify(data).slice(0, 500));
+  if (!resp.ok) throw new Error("Supabase upsert error: " + JSON.stringify(data).slice(0, 800));
   return data;
 }
 
@@ -125,7 +125,7 @@ Return ONLY valid JSON array (no markdown). Each item must be:
 {"word":"...","definition":"(max 12 words)","swedish":"...","sentence":"The ___ ...","level":${level}}
 Make sure the sentence uses ___ as placeholder exactly once.`;
 
-  const ck = cacheKey({ level, safeExisting, promptV: 2, model: MODEL });
+  const ck = cacheKey({ level, safeExisting, promptV: 3, model: MODEL });
   const cached = cacheGet(ck);
   if (cached) return json(200, cached);
 
@@ -157,7 +157,7 @@ Make sure the sentence uses ___ as placeholder exactly once.`;
     if (!Array.isArray(parsed)) return json(502, { error: "Unexpected model output", raw: cleaned.slice(0, 2000) });
 
     const out = parsed.map(x => ({
-      word: String(x.word || "").trim().toLowerCase(),
+      word: String(x.word || "").trim(),
       level: Number(x.level || level),
       definition: String(x.definition || "").trim(),
       swedish: String(x.swedish || "").trim(),
