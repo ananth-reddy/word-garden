@@ -3,15 +3,13 @@ function json(status, obj) {
   return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
 }
 
-const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_TTL_MS = 60 * 1000; // 60 sec
 let cache = { ts: 0, data: null };
 
 export default async (req) => {
   if (req.method !== "GET") return json(405, { error: "Method Not Allowed" });
 
-  if (cache.data && (Date.now() - cache.ts) < CACHE_TTL_MS) {
-    return json(200, cache.data);
-  }
+  if (cache.data && (Date.now() - cache.ts) < CACHE_TTL_MS) return json(200, cache.data);
 
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -19,10 +17,9 @@ export default async (req) => {
 
   try {
     const resp = await fetch(
-      `${url}/rest/v1/words?select=word,level,definition,swedish,sentence,source,created_at&order=created_at.desc&limit=2000`,
+      `${url}/rest/v1/words?select=id,word,level,definition,swedish,sentence,source,created_at&order=created_at.desc&limit=2000`,
       { headers: { "apikey": key, "authorization": `Bearer ${key}` } }
     );
-
     const data = await resp.json();
     if (!resp.ok) return json(502, { error: "Supabase error", detail: data });
 

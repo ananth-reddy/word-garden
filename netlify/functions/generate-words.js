@@ -72,7 +72,7 @@ async function supabaseUpsert(words) {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
 
-  const resp = await fetch(`${url}/rest/v1/words`, {
+  const resp = await fetch(`${url}/rest/v1/words?on_conflict=word`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -109,14 +109,11 @@ export default async (req) => {
   const pw = checkPassword(body?.password);
   if (!pw.ok) return json(pw.status, { error: pw.msg });
 
-  const mode = body?.mode || "generate";
   const level = Number(body?.level ?? 1);
   const existingWords = Array.isArray(body?.existingWords) ? body.existingWords : [];
-
-  if (mode !== "generate") return json(400, { error: "Only 'generate' supported" });
   if (![1,2,3].includes(level)) return json(400, { error: "level must be 1, 2, or 3" });
 
-  const safeExisting = existingWords.map(w => String(w||"").trim().toLowerCase()).filter(Boolean).slice(0, 200);
+  const safeExisting = existingWords.map(w => String(w||"").trim().toLowerCase()).filter(Boolean).slice(0, 300);
 
   const levelDesc =
     level === 1 ? "easy (A1–A2 kid-friendly)" :
@@ -128,7 +125,7 @@ Return ONLY valid JSON array (no markdown). Each item must be:
 {"word":"...","definition":"(max 12 words)","swedish":"...","sentence":"The ___ ...","level":${level}}
 Make sure the sentence uses ___ as placeholder exactly once.`;
 
-  const ck = cacheKey({ level, safeExisting, promptV: 1 });
+  const ck = cacheKey({ level, safeExisting, promptV: 2, model: MODEL });
   const cached = cacheGet(ck);
   if (cached) return json(200, cached);
 
@@ -160,7 +157,7 @@ Make sure the sentence uses ___ as placeholder exactly once.`;
     if (!Array.isArray(parsed)) return json(502, { error: "Unexpected model output", raw: cleaned.slice(0, 2000) });
 
     const out = parsed.map(x => ({
-      word: String(x.word || "").trim(),
+      word: String(x.word || "").trim().toLowerCase(),
       level: Number(x.level || level),
       definition: String(x.definition || "").trim(),
       swedish: String(x.swedish || "").trim(),

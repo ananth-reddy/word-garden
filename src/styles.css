@@ -1,10 +1,46 @@
-html, body { height: 100%; }
-body {
-  margin: 0;
-  background: #f0f5f1;
-  font-family: "DM Sans", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-  -webkit-tap-highlight-color: transparent;
-  overscroll-behavior: none;
+:root{
+  --bg:#f0f5f1;
+  --card:#ffffff;
+  --ink:#2d5a3d;
+  --muted:#7a9a82;
+  --line:#eef2ef;
+  --shadow: 0 2px 20px rgba(0,0,0,0.06);
 }
-* { box-sizing: border-box; }
-button { font-family: inherit; }
+*{ box-sizing:border-box; margin:0; padding:0; }
+html, body{ height:100%; background:var(--bg); -webkit-tap-highlight-color: transparent; }
+body{ font-family:"DM Sans", system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+button, input{ font: inherit; }
+button{ cursor:pointer; }
+.page{ min-height:100vh; display:flex; justify-content:center; padding:18px 14px; }
+.container{ width:100%; max-width:560px; }
+.card{ background:var(--card); border-radius:20px; padding:22px 20px; box-shadow:var(--shadow); }
+.title{ font-family:"DM Serif Display", serif; font-size:36px; color:var(--ink); letter-spacing:-0.01em; text-align:center; }
+.subtitle{ font-size:15px; color:var(--muted); margin-top:6px; line-height:1.5; text-align:center; }
+.row{ display:flex; gap:10px; }
+.badge{ text-align:center; padding:10px 0; background:#f5f7f5; border-radius:12px; flex:1; }
+.badgeVal{ font-size:20px; font-weight:700; color:var(--ink); font-family:"DM Serif Display", serif; }
+.badgeLab{ font-size:10px; color:#7a9a82; margin-top:2px; text-transform:uppercase; letter-spacing:0.06em; }
+.btnPrimary{
+  width:100%; border:none; border-radius:14px; padding:14px 16px;
+  font-size:15px; font-weight:700; background:var(--ink); color:#fff;
+  box-shadow: 0 8px 18px rgba(45,90,61,0.18); margin-top:10px;
+}
+.btnSecondary{
+  width:100%; border:1px solid #dbe6dd; border-radius:14px; padding:13px 16px;
+  font-size:15px; font-weight:700; background:#fff; color:var(--ink); margin-top:10px;
+}
+.btnGhost{
+  width:100%; border:none; border-radius:14px; padding:13px 16px;
+  font-size:15px; font-weight:700; background:#f5f7f5; color:var(--ink); margin-top:10px;
+}
+.small{ font-size:12px; color:var(--muted); line-height:1.5; }
+.h2{ font-family:"DM Serif Display", serif; font-size:24px; color:var(--ink); margin:0; }
+.topbar{ display:flex; justify-content:space-between; align-items:center; gap:10px; }
+.iconBtn{ border:none; background:#f5f7f5; border-radius:10px; padding:8px 10px; font-weight:900; color:var(--ink); }
+.input{ width:100%; border:1px solid #dbe6dd; border-radius:14px; padding:12px 14px; font-size:15px; outline:none; }
+.pill{ display:inline-flex; padding:6px 10px; border-radius:999px; background:#f5f7f5; font-size:12px; color:var(--ink); font-weight:700; }
+.hr{ height:1px; background:var(--line); margin:14px 0; }
+.choice{ border:1px solid #dbe6dd; background:#fff; border-radius:14px; padding:12px 12px; width:100%; text-align:left; margin-top:10px; font-weight:700; color:var(--ink); }
+.choice:hover{ background:#f7fbf7; }
+.toastWrap{ position:fixed; left:12px; right:12px; bottom:12px; }
+.toast{ background:#fff; border-radius:16px; padding:12px 12px; box-shadow:var(--shadow); border-left:6px solid #c85; }

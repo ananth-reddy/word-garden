@@ -1,19 +1,21 @@
-# Word Garden (Vite + Netlify) — build 20260217-230536
+# Word Garden — Practice + Placement + Word list (build 20260218-000818)
 
-This package fixes the Babel inline-script syntax issues by using a proper Vite React build.
+This build adds:
+- Home screen with Placement Test (like your screenshot)
+- Placement test (10 questions)
+- Practice session (8 words/day, mixed new + review) with:
+  - multiple choice
+  - type from definition
+  - fill in blank
+  - Swedish → English
+- Word list screen (search + grouped by level)
 
-## Deploy
-1) Push to GitHub
-2) Netlify → Add new site → Import from Git
-3) Set env vars in Netlify:
+## Netlify env vars
 - ANTHROPIC_API_KEY
 - WORDGARDEN_ADMIN_PASSWORD
 - SUPABASE_URL
 - SUPABASE_SERVICE_ROLE_KEY
-4) Redeploy
+- (optional) ANTHROPIC_MODEL = claude-sonnet-4-6
 
-## Admin
-Progress → tap 🔒 3 times → enter password → Generate.
-
-## Supabase
-Run `supabase.sql` in Supabase SQL editor (creates `words`).
+## Deploy
+Push to GitHub and Netlify will build automatically.
