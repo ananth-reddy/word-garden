@@ -40,7 +40,16 @@ function progressKey(code){ return `${PROG_PREFIX}${String(code||"").trim()}`; }
 function loadProgress(code){
   try{ const raw = localStorage.getItem(progressKey(code)); return raw ? JSON.parse(raw) : null; }catch{ return null; }
 }
-function saveProgress(code, p){ try{ const now = new Date().toISOString(); const out = { ...(p||{}), _updatedAt: now }; localStorage.setItem(progressKey(code), JSON.stringify(out)); }catch{} }
+function saveProgress(code, p){
+  try{
+    const now = new Date().toISOString();
+    const out = { ...(p||{}), _updatedAt: now };
+    localStorage.setItem(progressKey(code), JSON.stringify(out));
+  }catch{
+    // ignore storage failures
+  }
+}
+
 
 async function apiListWords() {
   const res = await fetch("/.netlify/functions/list-words");
@@ -48,6 +57,8 @@ async function apiListWords() {
   if (!res.ok) throw new Error(data?.error || "Failed to load words");
   return Array.isArray(data) ? data : [];
 }
+
+
 
 
 function loadActiveProfile(){
@@ -1059,6 +1070,9 @@ export default function App(){
 
   const [words, setWords] = useState([]);
   const [view, setView] = useState(() => (loadActiveProfile()?.profileCode ? "loading" : "profile")); // profile|home|learn|progress|placement|daily|weak|parentGate|parent
+  useEffect(() => {
+    if (view === "loading" && !activeProfile?.profileCode) setView("profile");
+  }, [view, activeProfile]);
   const [toast, setToast] = useState("");
   const [adminPw, setAdminPw] = useState(() => sessionStorage.getItem("wg_admin_pw") || "");
   const [generateStatus, setGenerateStatus] = useState("");
@@ -1198,46 +1212,7 @@ const onPlacementDone = ({ level, score }) => {
     setView("home");
   };
 
-  if (view === "profile"){
-    return <ProfileGateScreen onJoin={(p)=>{ saveActiveProfile(p); setActiveProfile(p); setView("loading"); }} onGoParent={() => setView("parentGate")} />;
-  }
 
-  if (view === "loading"){
-    return <div className="page"><div className="container"><Card><div className="small">Loading…</div></Card></div></div>;
-  }
-
-  if (view === "placement") return <PlacementScreen words={words} onDone={onPlacementDone} onBack={() => setView("home")} />;
-  if (view === "learn") return <LearningFlow words={words} prog={prog} setProg={setProg} onHome={() => setView("home")} />;
-  if (view === "daily") return <DailyChallengeScreen words={words} prog={prog} setProg={setProg} onHome={() => setView("home")} />;
-  if (view === "weak") return <WeakWordsScreen words={words} prog={prog} setProg={setProg} onHome={() => setView("home")} />;
-  if (view === "progress") return (
-    <ProgressScreen
-      prog={prog}
-      words={words}
-      onHome={() => setView("home")}
-      onRetakePlacement={() => setView("placement")}
-      onParentMode={() => setView("parentGate")}
-    />
-  );
-  if (view === "parentGate") return <ParentGate onBack={() => setView("progress")} onUnlock={() => setView("parent")} />;
-  if (view === "parent") return (
-    <ParentModeScreen
-      prog={prog}
-      words={words}
-      onBack={() => setView("home")}
-      onGenerate={doGenerate}
-      generateStatus={generateStatus}
-      onResetChild={resetChild}
-      activeProfile={activeProfile}
-      profiles={profiles}
-      onListProfiles={refreshProfiles}
-      onCreateProfile={createProfile}
-      onSwitchProfile={switchProfile}
-      onSignOut={signOut}
-    />
-  );
-
-  
   // Debounced progress sync (per child profile)
   useEffect(() => {
     const code = activeProfile?.profileCode;
@@ -1264,26 +1239,74 @@ const onPlacementDone = ({ level, score }) => {
     setProg(freshProgress());
     setView("profile");
   };
-return (
-    <>
-      <HomeScreen
+
+  let screen = null;
+
+  if (view === "profile"){
+    screen = <ProfileGateScreen onJoin={(p)=>{ saveActiveProfile(p); setActiveProfile(p); setView("loading"); }} onGoParent={() => setView("parentGate")} />;
+  } else if (view === "loading"){
+    screen = <div className="page"><div className="container"><Card><div className="small">Loading…</div></Card></div></div>;
+  } else if (view === "placement"){
+    screen = <PlacementScreen words={words} onDone={onPlacementDone} onBack={() => setView("home")} />;
+  } else if (view === "learn"){
+    screen = <LearningFlow words={words} prog={prog} setProg={setProg} onHome={() => setView("home")} />;
+  } else if (view === "daily"){
+    screen = <DailyChallengeScreen words={words} prog={prog} setProg={setProg} onHome={() => setView("home")} />;
+  } else if (view === "weak"){
+    screen = <WeakWordsScreen words={words} prog={prog} setProg={setProg} onHome={() => setView("home")} />;
+  } else if (view === "progress"){
+    screen = (
+      <ProgressScreen
         prog={prog}
-        wordsCount={words.length}
-        onStart={() => setView("learn")}
-        onProgress={() => setView("progress")}
-        onDaily={() => setView("daily")}
-        onWeak={() => setView("weak")}
-        onPlacement={() => setView("placement")}
-        onSkipPlacement={skipPlacement}
+        words={words}
+        onHome={() => setView("home")}
+        onRetakePlacement={() => setView("placement")}
+        onParentMode={() => setView("parentGate")}
       />
-      {toast && (
-        <div style={{ position:"fixed", left:12, right:12, bottom:12 }}>
-          <div className="card" style={{ padding: 14 }}>
-            <div style={{ fontWeight: 900 }}>Note</div>
-            <div className="small" style={{ marginTop: 6 }}>{toast}</div>
+    );
+  } else if (view === "parentGate"){
+    screen = <ParentGate onBack={() => setView("progress")} onUnlock={() => setView("parent")} />;
+  } else if (view === "parent"){
+    screen = (
+      <ParentModeScreen
+        prog={prog}
+        words={words}
+        onBack={() => setView("home")}
+        onGenerate={doGenerate}
+        generateStatus={generateStatus}
+        onResetChild={resetChild}
+        activeProfile={activeProfile}
+        profiles={profiles}
+        onListProfiles={refreshProfiles}
+        onCreateProfile={createProfile}
+        onSwitchProfile={switchProfile}
+        onSignOut={signOut}
+      />
+    );
+  } else {
+    screen = (
+      <>
+        <HomeScreen
+          prog={prog}
+          wordsCount={words.length}
+          onStart={() => setView("learn")}
+          onProgress={() => setView("progress")}
+          onDaily={() => setView("daily")}
+          onWeak={() => setView("weak")}
+          onPlacement={() => setView("placement")}
+          onSkipPlacement={skipPlacement}
+        />
+        {toast && (
+          <div style={{ position:"fixed", left:12, right:12, bottom:12 }}>
+            <div className="card" style={{ padding: 14 }}>
+              <div style={{ fontWeight: 900 }}>Note</div>
+              <div className="small" style={{ marginTop: 6 }}>{toast}</div>
+            </div>
           </div>
-        </div>
-      )}
-    </>
-  );
+        )}
+      </>
+    );
+  }
+
+  return screen;
 }
