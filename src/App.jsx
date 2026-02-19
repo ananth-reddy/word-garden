@@ -59,7 +59,6 @@ async function apiListWords() {
 }
 
 
-}
 
 
 function loadActiveProfile(){
