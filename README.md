@@ -25,3 +25,14 @@
 
 ## Notes
 - Parent gate is local-only (hides controls from kids). Generation still checks server-side password.
+
+
+## Progress sync across devices (Supabase)
+This build stores *words* in Supabase (as before) and also optionally stores *progress* in Supabase so it can be shared across iPhone/iPad.
+
+1) Run the updated `supabase.sql` (it creates `progress_sync` table).
+2) Deploy to Netlify with `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`.
+3) In the app: Progress → Parent mode → set a **Sync code** (e.g. WG-ABC123) on device A.
+4) On device B: enter the same Sync code. Progress will sync.
+
+Security note: anyone who knows the Sync code can read/write that progress. Keep it private (treat it like a password).
