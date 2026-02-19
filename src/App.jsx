@@ -1070,6 +1070,9 @@ export default function App(){
 
   const [words, setWords] = useState([]);
   const [view, setView] = useState(() => (loadActiveProfile()?.profileCode ? "loading" : "profile")); // profile|home|learn|progress|placement|daily|weak|parentGate|parent
+  useEffect(() => {
+    if (view === "loading" && !activeProfile?.profileCode) setView("profile");
+  }, [view, activeProfile]);
   const [toast, setToast] = useState("");
   const [adminPw, setAdminPw] = useState(() => sessionStorage.getItem("wg_admin_pw") || "");
   const [generateStatus, setGenerateStatus] = useState("");
