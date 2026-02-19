@@ -40,7 +40,16 @@ function progressKey(code){ return `${PROG_PREFIX}${String(code||"").trim()}`; }
 function loadProgress(code){
   try{ const raw = localStorage.getItem(progressKey(code)); return raw ? JSON.parse(raw) : null; }catch{ return null; }
 }
-function saveProgress(code, p){ try{ const now = new Date().toISOString(); const out = { ...(p||{}), _updatedAt: now }; localStorage.setItem(progressKey(code), JSON.stringify(out)); }catch{} }catch{} }
+function saveProgress(code, p){
+  try{
+    const now = new Date().toISOString();
+    const out = { ...(p||{}), _updatedAt: now };
+    localStorage.setItem(progressKey(code), JSON.stringify(out));
+  }catch{
+    // ignore storage failures
+  }
+}
+
 
 async function apiListWords() {
   const res = await fetch("/.netlify/functions/list-words");
