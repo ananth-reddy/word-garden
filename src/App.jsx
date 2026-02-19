@@ -40,16 +40,7 @@ function progressKey(code){ return `${PROG_PREFIX}${String(code||"").trim()}`; }
 function loadProgress(code){
   try{ const raw = localStorage.getItem(progressKey(code)); return raw ? JSON.parse(raw) : null; }catch{ return null; }
 }
-function saveProgress(code, p){
-  try{
-    const now = new Date().toISOString();
-    const out = { ...(p||{}), _updatedAt: now };
-    localStorage.setItem(progressKey(code), JSON.stringify(out));
-  }catch{
-    // ignore storage failures
-  }
-}
-
+function saveProgress(code, p){ try{ const now = new Date().toISOString(); const out = { ...(p||{}), _updatedAt: now }; localStorage.setItem(progressKey(code), JSON.stringify(out)); }catch{} }
 
 async function apiListWords() {
   const res = await fetch("/.netlify/functions/list-words");
@@ -57,8 +48,6 @@ async function apiListWords() {
   if (!res.ok) throw new Error(data?.error || "Failed to load words");
   return Array.isArray(data) ? data : [];
 }
-
-
 
 
 function loadActiveProfile(){
@@ -1070,9 +1059,6 @@ export default function App(){
 
   const [words, setWords] = useState([]);
   const [view, setView] = useState(() => (loadActiveProfile()?.profileCode ? "loading" : "profile")); // profile|home|learn|progress|placement|daily|weak|parentGate|parent
-  useEffect(() => {
-    if (view === "loading" && !activeProfile?.profileCode) setView("profile");
-  }, [view, activeProfile]);
   const [toast, setToast] = useState("");
   const [adminPw, setAdminPw] = useState(() => sessionStorage.getItem("wg_admin_pw") || "");
   const [generateStatus, setGenerateStatus] = useState("");
