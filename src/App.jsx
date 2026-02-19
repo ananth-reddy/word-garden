@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
 
-const BUILD_ID = "20260218-004941";
+const BUILD_ID = "20260219-195150";
 const ACTIVE_PROFILE_KEY = "wg_active_profile_v1";
 const PROG_PREFIX = "wg_progress_v1_";
 const LEVELS = [

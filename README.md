@@ -1,4 +1,4 @@
-# Word Garden — screenshot-matching UI + daily challenge + weak words + parent mode (build 20260218-004941)
+# Word Garden — screenshot-matching UI + daily challenge + weak words + parent mode (build 20260219-195150)
 
 ## What’s included
 - Header matches your HTML: **Garden** is light green + italic.
